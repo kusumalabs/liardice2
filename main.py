@@ -20,6 +20,7 @@ Run:
 """
 
 import html
+from collections import deque
 import math
 import random
 import time
@@ -32,10 +33,6 @@ import streamlit as st
 ANTE = 20
 START_MONEY = 200
 DICE_PER_PLAYER = 5
-NPC_NAMES = [
-    "Diego", "Abraham", "Old Pete", "Rosa", "Silas", "Mateo",
-    "Clem", "Jonah", "Ezequiel", "Hattie", "Wade", "Lupe",
-]
 AVATARS = ["🤠", "🧔", "👴", "👒", "🎩", "👨"]
 LOCATIONS = {
     "Thieves' Landing": "A river den of smugglers, drunks and cardsharps — West Elizabeth",
@@ -61,7 +58,27 @@ PIPS = {
     6: [(27, 24), (73, 24), (27, 50), (73, 50), (27, 76), (73, 76)],
 }
 
+# Original NPC names (all 14 characters or fewer). Frontier folk up north, Mexican folk down south.
+NAMES_FRONTIER = [
+    "Old Pete", "Silas", "Clem", "Jonah", "Hattie", "Wade", "Abraham", "Two-Bit Ezra",
+    "One-Eyed Jack", "Doc Hollis", "Cyrus Crane", "Mabel Price", "Tobias Reed", "Big Earl",
+    "Lefty Moran", "Cass Whitlow", "Jeb Tanner", "Ike Dunbar", "Prudence", "Amos Hale",
+    "Nell Sawyer", "Rufus Kane", "Gideon Ash", "Lottie Blue", "Rattler Jim", "Wiley Fenn",
+    "Ma Kettleby", "Josiah Pike", "Smokey Dawes", "Whiskey Bill", "Preacher Cole",
+    "Dutch Harlan", "Granny Odell", "Slim Jenkins", "Ada Quill", "Boone Mercer",
+    "Hank Stroud", "Virgil Tate", "Mercy Blake", "Calvin Bright", "Otis Grubb", "Tess Carver",
+]
+NAMES_MEXICO = [
+    "Diego", "Rosa", "Mateo", "Ezequiel", "Lupe", "Augustin", "Esperanza", "Ramón",
+    "Consuelo", "Hector Ruiz", "Ignacio", "Delfina", "Father Tomás", "Pablo Vega",
+    "Ines Cordero", "Chuy Morales", "Paquita", "Don Alfonso", "Rafa Ibarra", "Soledad",
+    "El Gordo Beto", "Marisol", "Cruz Salinas", "Tío Fermín", "Graciela", "Joaquín",
+    "Abuela Nena", "Nacho Treviño", "Celestino", "Pilar Reyes",
+]
+NPC_NAMES = NAMES_FRONTIER + NAMES_MEXICO
+
 # Table talk — original lines written in an Old West saloon voice.
+# {name} = the player the line is aimed at.
 LINES = {
     "open": [
         "Let's see what the bones have to say.",
@@ -70,6 +87,14 @@ LINES = {
         "Easy now. Nobody's gettin' shot over dice... tonight.",
         "I'll start us off gentle.",
         "My granddaddy taught me this game. Then he lost the farm at it.",
+        "Fresh roll, fresh lies.",
+        "Somebody wake the piano player. This'll be good.",
+        "I'll keep it honest. For now.",
+        "Ladies first — oh, it's me. Fine.",
+        "These bones feel warm tonight.",
+        "Let's not dawdle, I got a horse waitin'.",
+        "Start small, end rich. That's my creed.",
+        "I'll open. Don't nobody faint.",
     ],
     "raise": [
         "I'll see that and raise ya.",
@@ -80,12 +105,34 @@ LINES = {
         "I've seen better bluffs from a preacher.",
         "Keep 'em comin'.",
         "Higher. Much higher.",
+        "I'll climb that ladder.",
+        "Ain't nothin' wrong with a little ambition.",
+        "Up she goes.",
+        "You call that a bid? Watch this.",
+        "My mama didn't raise no quitter.",
+        "Sure, why not. Life's short out here.",
+        "I'll take that and add a little sugar.",
+        "Don't blink now.",
+        "I like where this is headin'.",
+        "Somebody's gonna bleed for this one.",
     ],
     "bold": [
         "Don't look at me like that.",
         "I know what I'm doin'... mostly.",
         "Fortune favors the reckless.",
         "Go on, call me a liar. I dare ya.",
+        "Heh. Thought I'd liven things up.",
+        "Sometimes you gotta ride straight into the storm.",
+        "Either I'm a genius or I'm buyin' drinks.",
+        "Nerves of steel, brains of mud. That's me.",
+    ],
+    "lastdie": [
+        "One die left and I'm still breathin'.",
+        "Last bullet in the chamber. Make it count.",
+        "Down to my last bone. Don't you pity me.",
+        "One's all a man needs. Allegedly.",
+        "I been in tighter spots than this. Not many, though.",
+        "Just me and this lonely little die.",
     ],
     "bluff": [
         "Liar! Lift that cup.",
@@ -94,12 +141,24 @@ LINES = {
         "That's a tall tale, friend. Let's see 'em.",
         "Not a chance in hell. Cups up!",
         "I call. Show your hand, snake.",
+        "Pfft. Liar, liar.",
+        "You lie like a cheap rug, {name}.",
+        "I smell manure, and it ain't the stables.",
+        "Lift it, {name}. Slow.",
+        "That's the biggest whopper I heard all week.",
+        "No sir. Not buyin' it.",
+        "Your mouth's writin' checks your cup can't cash.",
+        "Bull. Cups up, everybody.",
     ],
     "spot": [
         "Spot on. I'd bet my boots on it.",
         "That's exactly right, I reckon.",
         "Dead on the money. Show 'em.",
         "Spot on — and I ain't never wrong.",
+        "Right on the nose, {name}.",
+        "Not a hair more, not a hair less.",
+        "I can feel it in my bones. Spot on.",
+        "Exactly that many. Swear on my mule.",
     ],
     "gloat": [
         "Read you like a dime novel.",
@@ -108,6 +167,22 @@ LINES = {
         "Like takin' candy from a baby.",
         "Told ya. The bones don't lie — folks do.",
         "Another round? Your funeral.",
+        "Sweet as Sunday pie.",
+        "That's how it's done out west.",
+        "I'd tip my hat, but I'm busy winnin'.",
+        "Somebody write that down.",
+        "Easy as fallin' off a horse.",
+        "Ha! Knew it in my gut.",
+    ],
+    "gloat_at": [
+        "Better luck next time, {name}.",
+        "You're too easy, {name}.",
+        "Don't cry now, {name}. It's just a die.",
+        "{name}, you oughta stick to checkers.",
+        "Go home, {name}. Your mama's callin'.",
+        "Thanks for the gift, {name}.",
+        "I been readin' you all night, {name}.",
+        "{name}, your poker face needs work.",
     ],
     "lose": [
         "Well, I'll be...",
@@ -116,20 +191,77 @@ LINES = {
         "Lucky guess. Won't happen twice.",
         "These dice are crooked, I tell ya.",
         "Bartender! Whiskey. Now.",
+        "Hell's bells.",
+        "That one stung.",
+        "Fine. Keep it. I got plenty.",
+        "I'll remember that.",
+        "Son of a gun.",
+        "Who taught you to play like that?",
+        "Hmph. I was just warmin' up.",
+        "Ain't my night. Yet.",
+    ],
+    "watch": [
+        "Ooh, that's gotta sting.",
+        "Ha! Somebody fetch a doctor.",
+        "Sure glad that wasn't me.",
+        "Now that's entertainment.",
+        "Hoo boy.",
+        "And the plot thickens.",
+        "Should've stayed home tonight, huh?",
+        "I'd have called it too.",
     ],
     "out": [
         "I'm cleaned out. Good game, gents.",
         "That's me done. Drinks are on you.",
         "Bah. I'm goin' to the bar.",
         "Next time, stranger. Next time.",
+        "Plucked like a Sunday chicken.",
+        "I'll be back. With better dice.",
+        "Well, the wife's gonna kill me.",
+        "Somebody owes me a drink for that.",
     ],
     "win": [
         "Drinks are on me... well, maybe one.",
         "The bones love me tonight.",
         "Pleasure doin' business.",
         "Come back when you've got more money and less sense.",
+        "That's what I call a payday.",
+        "Another notch on the old cup.",
+        "Y'all play again soon, y'hear?",
+        "Thank you kindly. I'll be buyin' a new hat.",
     ],
 }
+
+# Spanish-flavoured lines, mixed in at the Nuevo Paraíso tables.
+LINES_MX = {
+    "open": ["¡Vámonos! Let's play.", "Ay, these dice are hot tonight.", "Con calma, amigos. Con calma."],
+    "raise": ["¿Eso es todo? Más.", "Ándale, I'll go higher.", "No tengo miedo, amigo.", "Más, más, más."],
+    "bluff": ["¡Mentiroso! Lift the cup.", "¡Qué mentira! Show me.", "Ay, no, no, no. Liar.",
+              "¡Mentiras, {name}!"],
+    "spot": ["Exacto. Spot on.", "Justo así. I'd swear on my abuela."],
+    "gloat": ["¡Ja! Too easy.", "Gracias por el regalo.", "¡Así se hace!", "Olé."],
+    "gloat_at": ["Lo siento, {name}. Not really.", "Pobrecito {name}."],
+    "lose": ["¡Ay, caramba!", "¡No puede ser!", "Maldita sea...", "¡Híjole!"],
+    "watch": ["¡Uy! That hurt.", "¡Qué drama!"],
+    "out": ["Adiós, amigos. I'm finished.", "Me voy a la cantina. Hasta luego."],
+    "win": ["¡Salud! Drinks on me.", "Gracias, gracias. You are too kind."],
+}
+
+# Narration for the table-talk feed.
+ROUND_LINES = [
+    "Round {n} — cups slam down. {d} dice on the table.",
+    "Round {n}. Dice rattle, cups hit wood. {d} dice in play.",
+    "Round {n} — the piano stops for a second. {d} dice under the cups.",
+    "Round {n}. Somebody spits in the corner. {d} dice on the table.",
+    "Round {n} — the barkeep leans in to watch. {d} dice left.",
+    "Round {n}. Smoke curls over the table. {d} dice in play.",
+]
+OUT_LINES = [
+    "{name} is out of dice and leaves the table.",
+    "{name} pushes back the chair and heads for the bar.",
+    "{name} is cleaned out.",
+    "{name}'s cup sits empty. That's all for them.",
+]
 
 
 # ----------------------------------------------------------------------------
@@ -193,6 +325,7 @@ class Game:
         self.reveal = None
         self.winner = None
         self.feed = []  # table talk: dicts {who, text, line, kind}
+        self.recent = deque(maxlen=16)  # recently used lines, so nobody repeats themselves
         self.bid_seq = 0
         self.unlocked = None
         self.banked = False
@@ -234,10 +367,27 @@ class Game:
     def _event(self, text):
         self.feed.append(dict(who=None, text=text, line=None, kind="event"))
 
-    def _quip(self, i, kind, chance=1.0):
+    def _quip(self, i, kind, chance=1.0, target=None):
+        """A line of table talk for AI seat i (None for humans or when they stay quiet)."""
         if self.players[i]["human"] or self.chat_rng.random() > chance:
             return None
-        return self.chat_rng.choice(LINES[kind])
+        pool = LINES.get(kind, [])
+        mx = LINES_MX.get(kind, [])
+        if self.players[i]["name"] in NAMES_MEXICO:
+            spanish = 0.45
+        else:
+            spanish = 0.1 if self.location != "Thieves' Landing" else 0.0
+        if mx and self.chat_rng.random() < spanish:
+            pool = mx
+        if target is None:
+            pool = [ln for ln in pool if "{name}" not in ln] or [
+                ln for ln in LINES.get(kind, []) if "{name}" not in ln]
+        if not pool:
+            return None
+        fresh = [ln for ln in pool if ln not in self.recent] or pool
+        line = self.chat_rng.choice(fresh)
+        self.recent.append(line)
+        return line.format(name=target) if target else line
 
     def _collect_antes(self):
         for p in self.players:
@@ -262,7 +412,7 @@ class Game:
         self.phase = "bidding"
         self.bid_seq += 1
         self.unlocked = None
-        self._event(f"Round {self.round_no} — cups slam down. {self.total_dice()} dice on the table.")
+        self._event(self.chat_rng.choice(ROUND_LINES).format(n=self.round_no, d=self.total_dice()))
 
     def place_bid(self, i, q, f, line=None):
         assert self.phase == "bidding" and i == self.turn, "Not this player's turn"
@@ -295,7 +445,7 @@ class Game:
                 eliminated.append(j)
 
         nm = self.players
-        call_line = self._quip(i, kind)
+        call_line = self._quip(i, kind, target=nm[b]["name"])
         call_text = "Liar!" if kind == "bluff" else "Spot on!"
         self.feed.append(dict(who=i, text=call_text, line=call_line, kind="call"))
 
@@ -304,7 +454,10 @@ class Game:
         winners = [j for j in snapshot if j not in losers]
         for j in winners:
             if j in (i, b):
-                line = self._quip(j, "gloat", 0.85)
+                if len(losers) == 1 and self.chat_rng.random() < 0.5:
+                    line = self._quip(j, "gloat_at", 0.85, target=nm[losers[0]]["name"])
+                else:
+                    line = self._quip(j, "gloat", 0.85)
                 if line:
                     react[j] = line
         for j in losers:
@@ -315,13 +468,19 @@ class Game:
             line = self._quip(j, "out")
             if line:
                 react[j] = line
+        bystanders = [j for j in snapshot if j not in (i, b) and j not in react]
+        if bystanders:
+            j = self.chat_rng.choice(bystanders)
+            line = self._quip(j, "watch", 0.35)
+            if line:
+                react[j] = line
 
         loser_names = ", ".join(nm[j]["name"] for j in losers)
         self._event(f"Cups up: {NUM_WORDS[actual] if actual < len(NUM_WORDS) else actual} "
                     f"{FACE_ONE[f] if actual == 1 else FACE_MANY[f]} on the table. "
                     f"{loser_names} lose{'s' if len(losers) == 1 else ''} a die.")
         for j in eliminated:
-            self._event(f"{nm[j]['name']} is out of dice and leaves the table.")
+            self._event(self.chat_rng.choice(OUT_LINES).format(name=nm[j]["name"]))
 
         alive = self.alive()
         self.bid_seq += 1
@@ -417,6 +576,8 @@ class Game:
         if action[0] == "bid":
             q, f = action[1], action[2]
             mood = action[3] if len(action) > 3 else ("open" if self.current_bid is None else "raise")
+            if len(self.players[i]["dice"]) == 1 and self.chat_rng.random() < 0.6:
+                mood = "lastdie"
             if not self.is_legal(q, f):  # safety net
                 dr = self.default_raise()
                 if dr is None:
@@ -511,7 +672,7 @@ button[kind="segmented_controlActive"] p{color:#fff3d6 !important;font-weight:bo
 .ld-sub b{color:var(--gold);font-family:'Rye',serif;font-weight:normal;}
 
 /* ---------- table & seats ---------- */
-.ld-table{background:radial-gradient(ellipse at center,#86532b 0%,#633a1d 55%,#3f2210 100%);
+.ld-table{margin-bottom:6px;background:radial-gradient(ellipse at center,#86532b 0%,#633a1d 55%,#3f2210 100%);
   border:7px solid #241208;border-radius:30px;padding:14px 12px 16px;
   box-shadow:inset 0 0 45px rgba(0,0,0,.65),0 12px 30px rgba(0,0,0,.6),0 0 0 2px rgba(212,167,58,.25);}
 .ld-seats{display:flex;flex-wrap:wrap;gap:10px;justify-content:center;}
@@ -552,7 +713,7 @@ button[kind="segmented_controlActive"] p{color:#fff3d6 !important;font-weight:bo
 .chip{background:rgba(0,0,0,.38);border:1px solid rgba(212,167,58,.45);border-radius:999px;padding:3px 11px;font-size:.78rem;}
 
 /* ---------- your cup ---------- */
-.hand{margin:16px 0 4px;background:rgba(18,9,3,.62);border:2px solid var(--gold);border-radius:18px;padding:12px;text-align:center;}
+.hand{margin:16px 0 8px;background:rgba(18,9,3,.62);border:2px solid var(--gold);border-radius:18px;padding:12px;text-align:center;}
 .hand-title{font-family:'Rye',serif;color:var(--gold);font-size:1.1rem;margin-bottom:8px;}
 .hand-dice{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;}
 .hand-sum{margin-top:8px;font-size:.85rem;opacity:.9;font-family:'Special Elite',monospace;}
@@ -574,10 +735,10 @@ button[kind="segmented_controlActive"] p{color:#fff3d6 !important;font-weight:bo
 .big{font-family:'Rye',serif;font-size:1.25rem;}
 
 /* ---------- table talk ---------- */
-.talk{margin-top:14px;background:rgba(18,9,3,.6);border:1px solid rgba(212,167,58,.35);border-radius:16px;padding:10px 12px;font-family:'Special Elite',monospace;}
+.talk{margin:16px 0 18px;background:rgba(18,9,3,.6);border:1px solid rgba(212,167,58,.35);border-radius:16px;padding:10px 12px;font-family:'Special Elite',monospace;}
 .talk-title{font-family:'Rye',serif;color:var(--gold);font-size:1rem;margin-bottom:6px;}
 .talk-row{padding:5px 0;border-top:1px dashed rgba(212,167,58,.2);font-size:.88rem;line-height:1.35;}
-.talk-row:first-of-type{border-top:0;}
+.talk-title + .talk-row{border-top:0;}
 .talk-row .who{font-family:'Rye',serif;color:var(--gold);}
 .talk-row .q{font-style:italic;color:#fff1cf;}
 .talk-row .bid{color:#f3b7a5;font-family:'Rye',serif;}
@@ -593,7 +754,8 @@ button[kind="segmented_controlActive"] p{color:#fff3d6 !important;font-weight:bo
 .stButton button:active{transform:translateY(3px);box-shadow:0 1px 0 #1e0f06;}
 .stButton button:disabled{filter:grayscale(.8) brightness(.8);opacity:.55;}
 
-/* expanders */
+/* expanders — breathing room between stacked boxes */
+[data-testid="stExpander"]{margin:0 0 12px !important;}
 [data-testid="stExpander"] details{background:rgba(20,10,4,.6);border:1px solid rgba(212,167,58,.35);border-radius:14px;}
 [data-testid="stExpander"] summary p{color:var(--gold);font-family:'Rye',serif;}
 [data-testid="stExpander"] summary svg,[data-testid="stExpander"] summary [data-testid="stIconMaterial"]{color:var(--gold);}
@@ -980,22 +1142,31 @@ def render_settings(g):
 
 def render_setup():
     ss = st.session_state
-    if "default_names" not in ss:
-        ss.default_names = ["Marston"] + random.sample(NPC_NAMES, 3)
+    ss.setdefault("faces", 0)
     with st.container(key="setup"):
         H("<div class='panel-title'>Pick a table</div>")
         loc = st.selectbox("Saloon", list(LOCATIONS), key="loc")
         H(f"<div class='panel-note'>{esc(LOCATIONS[loc])} · ${ANTE} ante</div>")
+        names_key = (loc, ss.faces)
+        if ss.get("names_key") != names_key:
+            local = NAMES_FRONTIER if loc == "Thieves' Landing" else NAMES_MEXICO
+            others = NAMES_MEXICO if loc == "Thieves' Landing" else NAMES_FRONTIER
+            pool = random.sample(local, 2) + random.sample(others, 1)
+            random.shuffle(pool)
+            ss.default_names = ["Marston"] + pool
+            ss.names_key = names_key
+        tag = f"{loc}_{ss.faces}"
         n = st.segmented_control("Players at the table", [2, 3, 4], default=2, key="n_players") or 2
         seats = []
         for i in range(n):
             with st.container(key=f"seatrow_{i}"):
                 c1, c2 = st.columns([1.4, 1])
                 with c1:
-                    name = st.text_input(f"Seat {i + 1}", value=ss.default_names[i], key=f"name_{i}", max_chars=14)
+                    name = st.text_input(f"Seat {i + 1}", value=ss.default_names[i], key=f"name_{tag}_{i}",
+                                         max_chars=14)
                 with c2:
                     kind = st.segmented_control("Player", ["Human", "AI"], default="Human" if i == 0 else "AI",
-                                                key=f"kind_{i}") or ("Human" if i == 0 else "AI")
+                                                key=f"kind_{tag}_{i}") or ("Human" if i == 0 else "AI")
             seats.append(dict(name=(name or f"Player {i + 1}").strip() or f"Player {i + 1}",
                               human=kind == "Human", avatar=AVATARS[i % len(AVATARS)]))
         H("<div class='panel-note'>More than one <b>Human</b> = hotseat mode: pass the device around, "
@@ -1007,7 +1178,15 @@ def render_setup():
         dup = len(set(names)) != len(names)
         if dup:
             H("<div class='warn'>Every player needs a different name.</div>")
-        if st.button(f"Take a seat & ante ${ANTE}", type="primary", disabled=dup, key="start"):
+        with st.container(key="endbtns"):
+            c1, c2 = st.columns([1.6, 1])
+            with c1:
+                start = st.button(f"Take a seat · ${ANTE}", type="primary", disabled=dup, key="start")
+            with c2:
+                if st.button("New faces", key="faces_btn"):
+                    ss.faces += 1
+                    st.rerun()
+        if start:
             for s in seats:
                 s["money"] = ss.bank.get(s["name"], START_MONEY)
             ss.game = Game(seats, loc)
